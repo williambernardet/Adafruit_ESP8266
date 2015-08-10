@@ -120,6 +120,70 @@ boolean Adafruit_ESP8266::find(Fstr *str, boolean ipd) {
   return found;
 }
 
+// Equivalent to find() function, but will keep reading until timeout.
+boolean Adafruit_ESP8266::contains(Fstr *str, boolean ipd) {
+  uint8_t  stringLength, matchedLength = 0;
+  int      c;
+  boolean  found = false, idpFound = false;
+  uint32_t t, save;
+  uint16_t bytesToGo = 0;
+
+  if(ipd) { // IPD stream stalls really long occasionally, what gives?
+    save = receiveTimeout;
+    setTimeouts(ipdTimeout);
+  }
+
+  if(str == NULL) str = F("OK\r\n");
+  stringLength = strlen_P((Pchr *)str);
+
+  if(debug && writing) {
+    debug->print(F("<--- '"));
+    writing = false;
+  }
+
+  for(t = millis();;) {
+    if(ipd && !idpFound) {  // Expecting next IPD marker?
+      if(find(F("+IPD,"))) { // Find marker in stream
+	    idpFound = true;
+        for(;;) {
+          if((c = stream->read()) > 0) { // Read subsequent chars...
+            if(debug) debug->write(c);
+            if(c == ':') break;          // ...until delimiter.
+            bytesToGo = (bytesToGo * 10) + (c - '0'); // Keep count
+            t = millis();    // Timeout resets w/each byte received
+          } else if(c < 0) { // No data on stream, check for timeout
+            if((millis() - t) > receiveTimeout) goto bail;
+          } else goto bail; // EOD on stream
+        }
+      } else break; // OK (EOD) or ERROR
+    }
+    if((c = stream->read()) > 0) { // Character received?
+      if(debug) debug->write(c);   // Copy to debug stream
+      bytesToGo--;
+      if(c == pgm_read_byte((Pchr *)str +
+              matchedLength)) {               // Match next byte?
+        if(++matchedLength == stringLength) { // Matched whole string?
+          found = true;                       // Winner!
+        }
+      } else {          // Character mismatch; reset match pointer+counter
+        matchedLength = 0;
+      }
+	  // nothing left to read;
+	  if (ipd && !bytesToGo) {
+		break;
+	  }	  
+      t = millis();     // Timeout resets w/each byte received
+    } else if(c < 0) {  // No data on stream, check for timeout
+      if((millis() - t) > receiveTimeout) break; // You lose, good day sir
+    } else break;       // End-of-data on stream
+  }
+
+  bail: // Sorry, dreaded goto.  Because nested loops.
+  if(debug) debug->println('\'');
+  return found;
+}
+
+
 // Read from ESP8266 stream into RAM, up to a given size.  Max number of
 // chars read is 1 less than this, so NUL can be appended on string.
 int Adafruit_ESP8266::readLine(char *buf, int bufSiz) {
@@ -158,7 +222,7 @@ boolean Adafruit_ESP8266::softReset(void) {
   uint32_t save  = receiveTimeout; // Temporarily override recveive timeout,
   receiveTimeout = resetTimeout;   // reset time is longer than normal I/O.
   println(F("AT+RST"));            // Issue soft-reset command
-  if(find(bootMarker)) {           // Wait for boot message
+  if(contains(bootMarker)) {           // Wait for boot message
     println(F("ATE0"));            // Turn off echo
     found = find();                // OK?
   }
@@ -177,17 +241,17 @@ void Adafruit_ESP8266::debugLoop(void) {
   }
 }
 
+boolean Adafruit_ESP8266::setMode(WifiMode mode) {
+  print(F("AT+CWMODE="));
+  println(mode);  // WiFi mode = Sta
+  return find();
+}
+
 // Connect to WiFi access point.  SSID and password are flash-resident
 // strings.  May take several seconds to execute, this is normal.
 // Returns true on successful connection, false otherwise.
 boolean Adafruit_ESP8266::connectToAP(Fstr *ssid, Fstr *pass) {
   char buf[256];
-
-  println(F("AT+CWMODE=1")); // WiFi mode = Sta
-  readLine(buf, sizeof(buf));
-  if(!(strstr_P(buf, (Pchr *)F("OK")) ||
-       strstr_P(buf, (Pchr *)F("no change")))) return false;
-
   print(F("AT+CWJAP=\"")); // Join access point
   print(ssid);
   print(F("\",\""));
@@ -219,7 +283,7 @@ boolean Adafruit_ESP8266::connectTCP(Fstr *h, int port) {
   print(F("\","));
   println(port);
 
-  if(find(F("Linked"))) {
+  if(contains(F("CONNECT"))) {
     host = h;
     return true;
   }
@@ -228,7 +292,7 @@ boolean Adafruit_ESP8266::connectTCP(Fstr *h, int port) {
 
 void Adafruit_ESP8266::closeTCP(void) {
   println(F("AT+CIPCLOSE"));
-  find(F("Unlink\r\n"));
+  find(F("CLOSED\r\n"));
 }
 
 // Requests page from currently-open TCP connection.  URL is

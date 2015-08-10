@@ -26,6 +26,7 @@
 
 typedef const __FlashStringHelper Fstr; // PROGMEM/flash-resident string
 typedef const PROGMEM char        Pchr; // Ditto, kindasorta
+enum WifiMode{ WIFI_MODE_STA=1, WIFI_MODE_AP=2, WIFI_MODE_BOTH=3 };
 
 #define defaultBootMarker F("ready\r\n")
 
@@ -37,6 +38,8 @@ class Adafruit_ESP8266 : public Print {
   boolean   hardReset(void),
             softReset(void),
             find(Fstr *str = NULL, boolean ipd = false),
+            contains(Fstr *str = NULL, boolean ipd = false),
+			setMode(WifiMode mode),
             connectToAP(Fstr *ssid, Fstr *pass),
             connectTCP(Fstr *host, int port),
             requestURL(Fstr *url),
